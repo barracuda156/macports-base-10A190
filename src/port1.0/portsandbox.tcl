@@ -120,7 +120,7 @@ proc portsandbox::set_profile {target} {
     foreach dir $allow_dirs {
         foreach perm $perms {
             append portsandbox_profile " (allow $perm ("
-            if {${os.major} > 9} {
+            if {${os.major} > 10} {
                 append portsandbox_profile "subpath \"${dir}\"))"
             } else {
                 append portsandbox_profile "regex #\"^${dir}/\"))"
