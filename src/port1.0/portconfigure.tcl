@@ -754,6 +754,7 @@ proc portconfigure::compiler_port_name {compiler} {
         {^macports-(mpich|openmpi|mpich-devel|openmpi-devel)-gcc-(\d+)(?:\.(\d+))?$}  {%s-gcc%s%s}
         {^macports-g95$}                                                              {g95}
         {^macports-(clang|gcc)-devel$}                                                {%s-devel}
+        {^macports-gcc-powerpc$}                                                      {%s-powerpc}
     }
     foreach {re fmt} $valid_compiler_ports {
         if {[set matches [regexp -inline $re $compiler]] ne ""} {
@@ -1294,6 +1295,10 @@ proc portconfigure::get_gcc_compilers {} {
         if {${os.major} >= 10} {
             lappend compilers macports-gcc-devel
         }
+
+        if {${os.arch} eq "powerpc"} {
+            lappend compilers macports-gcc-powerpc
+        }
     }
     return ${compilers}
 }
@@ -1710,7 +1715,7 @@ proc portconfigure::add_compiler_port_dependencies {compiler} {
                     set gcc_main_version 13
                 }
 
-                # compiler links against libraries in libgcc\d* and/or libgcc-devel
+                # compiler links against libraries in libgcc\d* and/or libgcc-*
                 if {[vercmp ${gcc_version} 4.6] < 0} {
                     set libgccs [list path:share/doc/libgcc/README:libgcc port:libgcc45]
                 } elseif {[vercmp ${gcc_version} 7] < 0} {
@@ -1720,7 +1725,7 @@ proc portconfigure::add_compiler_port_dependencies {compiler} {
                 } else {
                     # Using primary GCC version
                     # Do not depend directly on primary runtime port, as implied by libgcc
-                    # and doing so prevents libgcc-devel being used as an alternative.
+                    # and doing so prevents libgcc-* being used as an alternative.
                     set libgccs [list path:share/doc/libgcc/README:libgcc]
                 }
             }
