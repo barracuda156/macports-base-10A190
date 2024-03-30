@@ -1279,10 +1279,7 @@ proc portconfigure::get_gcc_compilers {} {
     } else {
         ui_debug "gcc_compilers.tcl not found in ports tree, using built-in selections"
 
-        # GCC 10 and above on OSX10.6+
-        if {${os.major} >= 10 || [option os.platform] ne "darwin"} {
-            lappend compilers macports-gcc-13 macports-gcc-12 macports-gcc-11 macports-gcc-10
-        }
+        lappend compilers macports-gcc-13 macports-gcc-12 macports-gcc-11 macports-gcc-10
 
         # GCC 9 and older only on OSX10.10 and older
         if {${os.major} < 15} {
@@ -1292,9 +1289,7 @@ proc portconfigure::get_gcc_compilers {} {
             lappend compilers macports-gcc-7 macports-gcc-6 macports-gcc-5
         }
 
-        if {${os.major} >= 10} {
-            lappend compilers macports-gcc-devel
-        }
+        lappend compilers macports-gcc-devel
 
         if {${os.arch} eq "powerpc"} {
             lappend compilers macports-gcc-powerpc
@@ -1709,11 +1704,7 @@ proc portconfigure::add_compiler_port_dependencies {compiler} {
 
                 # GCC version providing the primary runtime
                 # Note settings here *must* match those in the lang/libgcc port and compilers PG
-                if {[option os.platform] eq "darwin" && [option os.major] < 10} {
-                    set gcc_main_version 7
-                } else {
-                    set gcc_main_version 13
-                }
+                set gcc_main_version 13
 
                 # compiler links against libraries in libgcc\d* and/or libgcc-*
                 if {[vercmp ${gcc_version} 4.6] < 0} {
