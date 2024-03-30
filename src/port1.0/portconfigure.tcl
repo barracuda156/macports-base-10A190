@@ -388,6 +388,7 @@ proc portconfigure::configure_start {args} {
         {^macports-mpich-gcc-(\d+(?:\.\d+)?)$}     {MacPorts MPICH Wrapper for GCC %s}
         {^macports-openmpi-gcc-(\d+(?:\.\d+)?)$}   {MacPorts Open MPI Wrapper for GCC %s}
         {^macports-(clang|gcc)-devel$}             {MacPorts %s Development}
+        {^macports-gcc-powerpc$}                   {MacPorts GCC Development}
     }
     foreach {re fmt} $valid_compilers {
         if {[set matches [regexp -inline $re $compiler]] ne ""} {
@@ -754,7 +755,7 @@ proc portconfigure::compiler_port_name {compiler} {
         {^macports-(mpich|openmpi|mpich-devel|openmpi-devel)-gcc-(\d+)(?:\.(\d+))?$}  {%s-gcc%s%s}
         {^macports-g95$}                                                              {g95}
         {^macports-(clang|gcc)-devel$}                                                {%s-devel}
-        {^macports-gcc-powerpc$}                                                      {%s-powerpc}
+        {^macports-gcc-powerpc$}                                                      {gcc-powerpc}
     }
     foreach {re fmt} $valid_compiler_ports {
         if {[set matches [regexp -inline $re $compiler]] ne ""} {
@@ -1271,7 +1272,7 @@ proc portconfigure::get_clang_compilers {} {
 }
 # utility procedure: get GCC compilers based on os.major
 proc portconfigure::get_gcc_compilers {} {
-    global os.major porturl
+    global os.arch os.major porturl
     set compilers [list]
     set compiler_file [getportresourcepath $porturl "port1.0/compilers/gcc_compilers.tcl"]
     if {[file exists ${compiler_file}]} {
@@ -1579,6 +1580,17 @@ proc portconfigure::configure_get_compiler {type {compiler {}}} {
                 f77     -
                 f90     { return ${prefix_frozen}/bin/gfortran${suffix} }
             }
+        }
+    } elseif {$compiler eq "macports-gcc-powerpc"} {
+        switch $type {
+            cc      -
+            objc    { return ${prefix_frozen}/bin/gcc-mp-powerpc }
+            cxx     -
+            objcxx  { return ${prefix_frozen}/bin/g++-mp-powerpc }
+            cpp     { return ${prefix_frozen}/bin/cpp-mp-powerpc }
+            fc      -
+            f77     -
+            f90     { return ${prefix_frozen}/bin/gfortran-mp-powerpc }
         }
     } elseif {$compiler eq "macports-llvm-gcc-4.2"} {
         switch $type {
