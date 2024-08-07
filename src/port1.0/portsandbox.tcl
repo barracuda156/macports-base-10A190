@@ -30,6 +30,7 @@
 package provide portsandbox 1.0
 package require porttrace 1.0
 package require portutil 1.0
+package require portrpm 1.0
 
 namespace eval portsandbox {
 }
@@ -75,6 +76,10 @@ proc portsandbox::set_profile {target} {
             } else {
                 set allow_dirs [list ${package.destpath}]
             }
+        }
+        rpm -
+        srpm {
+            set allow_dirs [list ${rpm.srcdir} ${rpm.tmpdir}]
         }
     }
 

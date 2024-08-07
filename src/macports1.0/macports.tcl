@@ -126,6 +126,59 @@ proc macports::version {} {
     return ${macports::autoconf::macports_version}
 }
 
+##
+# Return the port environment variables.
+proc macports::environment {} {
+    set mpenv {}
+    if {![macports::ui_isset ports_quiet]} {
+        lappend mpenv "$macports::ui_prefix port_cmd_version:  ${macports::autoconf::macports_version}"
+    } else {
+        lappend mpenv "port_cmd_version  ${macports::autoconf::macports_version}"
+    }
+    if {[info exists macports::bootstrap_options]} {
+        foreach bootstrap_option [lsort $macports::bootstrap_options] {
+            if {[info exists macports::$bootstrap_option]} {
+                if {![macports::ui_isset ports_quiet]} {
+                    lappend mpenv "$macports::ui_prefix bootstrap_options: $bootstrap_option: [set macports::$bootstrap_option]"
+                } else {
+                    lappend mpenv "bootstrap_options $bootstrap_option [set macports::$bootstrap_option]"
+                }
+            }
+        }
+    }
+    if {[info exists macports::sources]} {
+        foreach source $macports::sources {
+            if {![macports::ui_isset ports_quiet]} {
+                lappend mpenv "$macports::ui_prefix port_tree_sources: $source"
+            } else {
+                lappend mpenv "port_tree_sources $source"
+            }
+        }
+    }
+    if {[info exists macports::global_variations]} {
+        set gvl {}
+        foreach {variation mode} [array get macports::global_variations] {
+            lappend gvl $mode$variation
+        }
+        if {![macports::ui_isset ports_quiet]} {
+            lappend mpenv "$macports::ui_prefix global_variations: [join $gvl { }]"
+        } else {
+            lappend mpenv "global_variations [join $gvl { }]"
+        }
+    }
+    set shenv {}
+    foreach keyval [exec /usr/bin/printenv] {
+        lappend shenv $keyval
+    }
+    if {![macports::ui_isset ports_quiet]} {
+        lappend mpenv "$macports::ui_prefix shell environment: [join $shenv { }]"
+    } else {
+        lappend mpenv "shell environment [join $shenv { }]"
+    }
+    ui_msg "[join $mpenv \n]"
+    return 0
+}
+
 # Provided UI instantiations
 # For standard messages, the following priorities are defined
 #     debug, info, msg, warn, error
@@ -230,8 +283,8 @@ proc macports::ch_logging {mport} {
     file mkdir $logdir
     set debuglogname [file join $logdir main.log]
 
-    # Append to the file if it already exists
-    set debuglog [open $debuglogname a]
+    # Truncate the file if it already exists
+    set debuglog [open $debuglogname w]
     puts $debuglog version:1
 
     ui_debug "Starting logging for $portname @[dict get $portinfo version]_[dict get $portinfo revision][dict get $portinfo canonical_active_variants]"
@@ -343,6 +396,13 @@ proc ui_message {priority prefix args} {
            error "$hint\nusage: ui_message priority prefix ?-nonewline? string"
        }
     } 
+
+    # adopt msg priority if the current phase equals the current priority
+    # this can only happen for ui_info during `port info` (currently).
+    if {[info exists current_phase]
+        && ${current_phase} eq ${priority}} {
+        set priority "msg"
+    }
 
     foreach chan $channels($priority) {
         if {[lindex $args 0] eq "-nonewline"} {
@@ -1010,7 +1070,9 @@ proc mportinit {{up_ui_options {}} {up_options {}} {up_variations {}}} {
     package require Pextlib 1.0
     package require registry 1.0
     package require registry2 2.0
-    package require machista 1.0
+    if {[string tolower $tcl_platform(os)] eq "darwin"} {
+        package require machista 1.0
+    }
 
     # Set the system encoding to utf-8
     encoding system utf-8
@@ -1040,10 +1102,17 @@ proc mportinit {{up_ui_options {}} {up_options {}} {up_variations {}}} {
            set os_arch arm
        }
     }
+    set os_platform [string tolower $tcl_platform(os)]
     set os_version $tcl_platform(osVersion)
     set os_major [lindex [split $os_version .] 0]
+    if {${os_platform} eq "linux" && (${os_major} > 3) } {
+        # RJVB : on Linux, 2.x kernels may need special treatment, but booting
+        # a 3.x or 4.x kernel (or later, presumably) doesn't make enough difference
+        # for the userland to justify upgrading all ports. Clamp everyone to 3
+        # until we encounter a backwards-incompatibile kernel.
+        set os_major 3
+    }
     set os_minor [lindex [split $os_version .] 1]
-    set os_platform [string tolower $tcl_platform(os)]
     # Remove trailing "Endian"
     set os_endian [string range $tcl_platform(byteOrder) 0 end-6]
     set os_subplatform {}
@@ -1125,6 +1194,9 @@ proc mportinit {{up_ui_options {}} {up_options {}} {up_variations {}}} {
                         } else {
                             set $option $val
                         }
+                        if {[info exists macports::ui_options(ports_env)]} {
+                            ui_msg "$macports::ui_prefix $file: ${option}: [set $option]"
+                        }
                     }
                 }
             }
@@ -1141,6 +1213,9 @@ proc mportinit {{up_ui_options {}} {up_options {}} {up_variations {}}} {
                 if {$option in $user_options} {
                     global macports::$option
                     set $option $val
+                    if {[info exists macports::ui_options(ports_env)]} {
+                        ui_msg "$macports::ui_prefix user: ${option}: [set $option]"
+                    }
                 }
             }
         }
@@ -1161,7 +1236,7 @@ proc mportinit {{up_ui_options {}} {up_options {}} {up_variations {}}} {
             if {[regexp $sources_conf_source_re $line _ url flags]} {
                 set flags [split $flags ,]
                 foreach flag $flags {
-                    if {$flag ni [list nosync default]} {
+                    if {$flag ni [list nosync default own_portgroups_first]} {
                         ui_warn "$sources_conf source '$line' specifies invalid flag '$flag'"
                     }
                     if {$flag eq "default"} {
@@ -1171,10 +1246,10 @@ proc mportinit {{up_ui_options {}} {up_options {}} {up_variations {}}} {
                         set sources_default [concat [list $url] $flags]
                     }
                 }
-                if {[string match rsync://*rsync.macports.org/release/ports/ $url]} {
-                    ui_warn "MacPorts is configured to use an unsigned source for the ports tree.\
-Please edit sources.conf and change '$url' to '[string range $url 0 end-6]tarballs/ports.tar'."
-                }
+#                 if {[string match rsync://*rsync.macports.org/release/ports/ $url]} {
+#                     ui_warn "MacPorts is configured to use an unsigned source for the ports tree.\
+# Please edit sources.conf and change '$url' to '[string range $url 0 end-6]tarballs/ports.tar'."
+#                 }
                 switch -- [macports::getprotocol $url] {
                     rsync -
                     https -
@@ -1188,6 +1263,9 @@ Please edit sources.conf and change '$url' to '[string range $url 0 end-6]tarbal
                     }
                 }
                 lappend sources [concat [list $url] $flags]
+                if {[info exists macports::ui_options(ports_env)]} {
+                    ui_msg "$macports::ui_prefix $sources_conf: [lindex $sources end]"
+                }
             } else {
                 ui_warn "$sources_conf specifies invalid source '$line', ignored."
             }
@@ -1262,6 +1340,19 @@ Please edit sources.conf and change '$url' to '[string range $url 0 end-6]tarbal
         if {![file exists $portdbpath]} {
             if {[catch {file mkdir $portdbpath} result]} {
                 return -code error "portdbpath $portdbpath does not exist and could not be created: $result"
+            }
+        } elseif {$os_platform eq "linux"} {
+            try {
+                if {[string match *64-bit* [exec lscpu]]} {
+                    ui_msg "build_arch x86_64"
+                    set macports::build_arch x86_64
+                } else {
+                    ui_msg "build_arch i386"
+                    set macports::build_arch i386
+                }
+            } catch {{*} eCode eMessage} {
+                ui_debug "Error setting macports::build_arch: $eMessage"
+                set macports::build_arch {}
             }
         } else {
             return -code error "$portdbpath is not a directory. Please create the directory $portdbpath and try again"
@@ -1767,9 +1858,9 @@ match macports.conf.default."
         set default_source_url [lindex $sources_default 0]
         if {[macports::getprotocol $default_source_url] eq "file" || [macports::getprotocol $default_source_url] eq "rsync"} {
             set default_portindex [macports::getindex $default_source_url]
-            if {[file exists $default_portindex] && [clock seconds] - [file mtime $default_portindex] > 1209600} {
-                ui_warn "port definitions are more than two weeks old, consider updating them by running 'port selfupdate'."
-            }
+#             if {[file exists $default_portindex] && [clock seconds] - [file mtime $default_portindex] > 1209600} {
+#                 ui_warn "port definitions are more than two weeks old, consider updating them by running 'port selfupdate'."
+#             }
         }
     }
 
@@ -1917,6 +2008,9 @@ proc macports::worker_init {workername portpath porturl portbuildpath options va
     $workername alias getportresourcepath macports::getportresourcepath
     $workername alias getportlogpath macports::getportlogpath
     $workername alias getdefaultportresourcepath macports::getdefaultportresourcepath
+    $workername alias getlocalporttreelist macports::getlocalporttreelist
+    $workername alias getlocaltreeoptions macports::getlocaltreeoptions
+    $workername alias getallporttrees macports::getallporttrees
     $workername alias getprotocol macports::getprotocol
     $workername alias getportdir macports::getportdir
     $workername alias findBinary macports::findBinary
@@ -1927,6 +2021,9 @@ proc macports::worker_init {workername portpath porturl portbuildpath options va
     $workername alias _portnameactive _portnameactive
     $workername alias get_actual_cxx_stdlib macports::get_actual_cxx_stdlib
     $workername alias shellescape macports::shellescape
+    ## RJVB
+    $workername alias get_logfile macports::get_logfile
+    $workername alias flush_logfile macports::flush_logfile
 
     # New Registry/Receipts stuff
     $workername alias registry_new registry::new_entry
@@ -2264,6 +2361,44 @@ proc macports::getdefaultportresourcepath {{path {}}} {
     return $proposedpath
 }
 
+##
+# @return the list of local port trees
+#
+proc macports::getlocalporttreelist {} {
+    global macports::sources
+    set sourcetreelist {}
+    foreach source $sources {
+        if {[macports::getprotocol $source] eq "file"} {
+            lappend sourcetreelist [string range [lindex ${source} 0] 7 end]
+        }
+    }
+    return ${sourcetreelist}
+}
+
+##
+# @return the options for local port tree @param tree
+#
+proc macports::getlocaltreeoptions {path} {
+    global macports::sources
+    set sourcetreelist {}
+    set path [file normalize ${path}]
+    foreach source $sources {
+        set spath [file normalize [string range [lindex ${source} 0] 7 end]]
+        if {${spath} eq ${path}} {
+            return [lrange ${source} 1 end]
+        }
+    }
+    return {}
+}
+
+proc macports::getallporttrees {} {
+    global macports::sources
+    set sourcetreelist {}
+    foreach source $sources {
+        lappend sourcetreelist [lindex ${source} 0]
+    }
+    return ${sourcetreelist}
+}
 
 ##
 # Opens a MacPorts portfile specified by a URL. The URL can be local (starting
@@ -2345,6 +2480,72 @@ proc mportopen {porturl {options {}} {variations {}} {nocache {}}} {
     # add the default universal variant if appropriate, and set up flags that
     # are conditional on whether universal is set
     $workername eval [list universal_setup]
+
+    $workername eval {
+        if {${os.platform} eq "linux"} {
+            if {[info exist PortInfo(variants)] && ![variant_exists fromHost]} {
+                set fhconfs ""
+                foreach v $PortInfo(variants) {
+                    if {${v} ne "fromHost"} {
+                        set fhconfs "${fhconfs} ${v}"
+                    }
+                }
+                variant fromHost conflicts [list {*}${fhconfs}] description \
+                    {assume the host already provides this port via distro packages, typically with the dev package included.} {}
+            } else {
+                variant fromHost description \
+                    {assume the host already provides this port via distro packages, typically with the dev package included.} {}
+            }
+            if {[variant_exists fromHost] && [info exist PortInfo(variants)] && [info exists PortInfo(vinfo)]} {
+                array unset vinfo
+                array set vinfo $PortInfo(vinfo)
+                foreach v $PortInfo(variants) {
+                    if {${v} eq "fromHost"} {
+                        continue
+                    }
+                    # if we're in the clear for ${v} vs. fromHost we can record
+                    # the conflict to inform the user via `port variants`:
+                    array unset variant
+                    if {[catch {array set variant $vinfo(${v})} err]} {
+                        # my KF5 ports trigger this??
+                        ui_debug "vinfo(${v})=\"$vinfo(${v})\" error is <${err}>; skipping"
+                        continue
+                    }
+                    if {[info exists variant(conflicts)]} {
+                        ui_debug "${v}: conflicts with $variant(conflicts), adding +fromHost"
+                        set newConflicts [join [lsort "$variant(conflicts) fromHost"]]
+                    } else {
+                        ui_debug "${v}: adding conflict with +fromHost"
+                        set newConflicts "fromHost"
+                    }
+                    array set variant [list conflicts ${newConflicts}]
+                    array set vinfo [list ${v} [array get variant]]
+                    array set PortInfo [list vinfo [array get vinfo]]
+                }
+            }
+            if {[variant_exists fromHost] && [variant_isset fromHost]} {
+                PortGroup stub 1.0
+                if {${subport} ne ${name}} {
+                    long_description-append \nNB: Stub because of +fromHost\; make sure you have all \
+                        the required distro packages installed to use and build against \"${subport}\" and/or \"${name}\"!
+                } else {
+                    long_description-append \nNB: Stub because of +fromHost\; make sure you have all \
+                        the required distro packages installed to use and build against \"${subport}\"!
+                }
+                fetch {}
+                depends_fetch
+                depends_extract
+                depends_lib
+                depends_build
+            }
+        }
+        if {![variant_exists fromHost] || ![variant_isset fromHost]} {
+            # Import a (possibly) local PortGroup that auto-adds
+            # missing X-dev build dependencies for dependencies
+            # known to have such an associated port.
+            catch {PortGroup devport_helper 1.0}
+        }
+    }
 
     # evaluate the variants
     if {[$workername eval [list eval_variants variations]] != 0} {
@@ -2888,7 +3089,7 @@ proc macports::_upgrade_mport_deps {mport target} {
                                     ui_error "its dependency $dep_portname is only installed for the arch '$active_archs'"
                                     ui_error "and the configured universal_archs '$universal_archs' are not sufficient."
                                     return -code error "architecture mismatch"
-                                } else {
+                                } elseif {${macports::os_platform} eq "darwin"} {
                                     # upgrade the dep with +universal
                                     dict set variants universal +
                                     dict set options ports_upgrade_enforce-variants yes
@@ -4184,13 +4385,19 @@ proc macports::_target_needs_deps {target} {
         configure -
         build -
         test -
+        srpm -
         destroot -
         install -
         activate -
+        rpm -
+        dpkg -
         dmg -
         mdmg -
         pkg -
-        mpkg {return 1}
+        mpkg -
+        rpm -
+        dpkg -
+        srpm {return 1}
         default {return 0}
     }
 }
@@ -4495,12 +4702,21 @@ proc macports::_upgrade {portname dspec variations options {depscachename {}}} {
     }
     set requestedflag [$regref requested]
     set os_platform_installed [$regref os_platform]
-    set os_major_installed [$regref os_major]
-    # These might error if the info is not present in the registry.
-    if {[catch {$regref cxx_stdlib} cxx_stdlib_installed]} {
+    if {$macports::os_platform eq "darwin"} {
+        set os_major_installed [$regref os_major]
+        # These might error if the info is not present in the registry.
+        if {[catch {$regref cxx_stdlib} cxx_stdlib_installed]} {
+            set cxx_stdlib_installed ""
+        }
+        if {[catch {$regref cxx_stdlib_overridden} cxx_stdlib_overridden]} {
+            set cxx_stdlib_overridden 0
+        }
+    } else {
+        # esp. on Linux there's no point in looking at the kernel version
+        global macports::os_major
+        set os_major_installed ${macports::os_major}
+        # nor at cxx_ stdlib stuff
         set cxx_stdlib_installed ""
-    }
-    if {[catch {$regref cxx_stdlib_overridden} cxx_stdlib_overridden]} {
         set cxx_stdlib_overridden 0
     }
     if {[dict exists $options ports_do_dependents]} {
@@ -5573,6 +5789,11 @@ proc macports::revupgrade_update_binary {fancy_output {revupgrade_progress ""}} 
 # @param revupgrade_progress
 #        Progress display callback name
 proc macports::revupgrade_update_cxx_stdlib {fancy_output {revupgrade_progress ""}} {
+    global macports::os_platform
+    if {$macports::os_platform ne "darwin"} {
+        ui_debug "Skipping C++ stdlib checks on $macports::os_platform"
+        return
+    }
     set maybe_cxx_ports [registry::entry search state installed cxx_stdlib -null]
     set maybe_cxx_len [llength $maybe_cxx_ports]
     if {$maybe_cxx_len > 0} {
@@ -5623,6 +5844,7 @@ proc macports::revupgrade_update_cxx_stdlib {fancy_output {revupgrade_progress "
 # @return 1 if ports were rebuilt and this function should be called again,
 #         0 otherwise.
 proc macports::revupgrade_scanandrebuild {broken_port_counts_name options} {
+    global macports::os_platform
     upvar $broken_port_counts_name broken_port_counts
     variable ui_options; variable ui_prefix
     variable cxx_stdlib; variable revupgrade_mode
@@ -5641,7 +5863,7 @@ proc macports::revupgrade_scanandrebuild {broken_port_counts_name options} {
     set broken_files [list]
     set binaries [registry::file search active 1 binary 1]
     set binary_count [llength $binaries]
-    if {$binary_count > 0} {
+    if {$binary_count > 0 && $macports::os_platform eq "darwin"} {
         ui_msg "$ui_prefix Scanning binaries for linking errors"
         set handle [machista::create_handle]
         if {$handle eq "NULL"} {
@@ -5884,16 +6106,22 @@ proc macports::revupgrade_scanandrebuild {broken_port_counts_name options} {
         }
 
         # check for mismatched cxx_stdlib
-        if {${cxx_stdlib} eq "libc++"} {
-            set wrong_stdlib libstdc++
+        if {$macports::os_platform eq "darwin"} {
+            ui_debug "Checking for erroneous use of $wrong_stdlib"
+            if {${cxx_stdlib} eq "libc++"} {
+                set wrong_stdlib libstdc++
+            } else {
+                set wrong_stdlib libc++
+            }
+            set broken_cxx_ports [registry::entry search state installed cxx_stdlib_overridden 0 cxx_stdlib $wrong_stdlib]
+            foreach cxx_port $broken_cxx_ports {
+                ui_warn "[$cxx_port name] is using $wrong_stdlib (this installation is configured to use ${cxx_stdlib})"
+            }
+            set broken_ports [lsort -unique [concat $broken_ports $broken_cxx_ports]]
         } else {
-            set wrong_stdlib libc++
+            # just using a different cxx_stdlib isn't necessarily an error if it works!
+            set broken_ports [lsort -unique [concat $broken_ports]]
         }
-        set broken_cxx_ports [registry::entry search state installed cxx_stdlib_overridden 0 cxx_stdlib $wrong_stdlib]
-        foreach cxx_port $broken_cxx_ports {
-            ui_info "[$cxx_port name] is using $wrong_stdlib (this installation is configured to use ${cxx_stdlib})"
-        }
-        set broken_ports [lsort -unique [concat $broken_ports $broken_cxx_ports]]
 
         if {[llength $broken_ports] == 0} {
             ui_msg "$ui_prefix No broken ports found."
@@ -6479,6 +6707,24 @@ proc macports::shellescape {arg} {
     # may not be an exhaustive list of safe characters but it is allowed
     # to put a backslash in front of safe characters too.
     return [regsub -all -- {[^A-Za-z0-9.:@%/+=_-]} $arg {\\&}]
+}
+
+## RJVB
+# return the logfile name, or an empty string
+proc macports::get_logfile {} {
+	if {[info exists ::debuglogname]} {
+		return $::debuglogname
+	} else {
+		return ""
+	}
+}
+proc macports::flush_logfile {} {
+	if {[info exists ::debuglog]} {
+		flush $::debuglog
+		return yes
+	} else {
+		return no
+	}
 }
 
 ##

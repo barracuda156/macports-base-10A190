@@ -157,7 +157,7 @@ default universal_possible {[expr {${os.universal_supported} && [llength ${confi
 
 default compiler.cpath {${prefix}/include}
 default compiler.library_path {${prefix}/lib}
-default compiler.log_verbose_output yes
+default compiler.log_verbose_output no
 default compiler.limit_flags no
 default compiler.support_environment_paths no
 default compiler.support_environment_sdkroot no

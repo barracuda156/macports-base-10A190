@@ -236,6 +236,8 @@
         skel
         ..
     ..
+    src
+    ..
     var
         cache
         ..

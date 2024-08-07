@@ -1677,6 +1677,7 @@ proc action_info { action portlist opts } {
         return 1
     }
 
+    set_phase "info"
     set separator ""
     global global_variations global_options
     set gvariations [dict create {*}[array get global_variations]]
@@ -2156,6 +2157,11 @@ proc action_notes { action portlist opts } {
 }
 
 
+proc macports::normalize { filename } {
+    set prefmap [list [file dirname [file normalize "${macports::prefix}/foo"]] ${macports::prefix}]
+    return [string map ${prefmap} [file normalize $filename]]
+}
+
 proc action_provides { action portlist opts } {
     # In this case, portname is going to be used for the filename... since
     # that is the first argument we expect... perhaps there is a better way
@@ -2165,7 +2171,7 @@ proc action_provides { action portlist opts } {
         return 1
     }
     foreach filename $portlist {
-        set file [file normalize $filename]
+        set file [macports::normalize $filename]
         if {[file exists $file] || ![catch {file type $file}]} {
             if {![file isdirectory $file] || [file type $file] eq "link"} {
                 set port [registry::file_registered $file]
@@ -2202,8 +2208,14 @@ proc action_activate { action portlist opts } {
     }
     foreachport $portlist {
         set composite_version [composite_version $portversion $variations]
+        if {[dict exists $options ports_force]} {
+            set force 1
+        } else {
+            set force 0
+        }
         if {![dict exists $options ports_activate_no-exec]
-            && ![catch {registry_installed $portname $composite_version} regref]} {
+            && ![catch {registry_installed $portname $composite_version} regref]
+            && !$force} {
 
             if {[$regref installtype] eq "image" && [registry::run_target $regref activate $options]} {
                 continue
@@ -2588,6 +2600,12 @@ proc action_version { action portlist opts } {
     }
     puts [macports::version]
     return 0
+}
+
+
+proc action_environment { action portlist opts } {
+    set status [macports::environment]
+    return $status
 }
 
 
@@ -3687,7 +3705,7 @@ proc action_portcmds { action portlist opts } {
                     set editor_var "ports_${action}_editor"
                     if {[dict exists $opts $editor_var]} {
                         set editor [join [dict get $opts $editor_var]]
-                    } else {
+                    } elseif {![macports::global_option_isset ports_force]} {
                         foreach ed { MP_EDITOR VISUAL EDITOR } {
                             if {[info exists env($ed)]} {
                                 set editor $env($ed)
@@ -3697,7 +3715,14 @@ proc action_portcmds { action portlist opts } {
                     }
 
                     # Use a reasonable canned default if no editor specified or set in env
-                    if { $editor eq "" } { set editor "/usr/bin/vi" }
+                    # or the user used the -f option to bypass any custom settings.
+                    if { $editor eq "" } {
+                        if {[file exists ${macports::prefix}/bin/vim]} {
+                            set editor "${macports::prefix}/bin/vim"
+                        } else {
+                            set editor "/usr/bin/vi"
+                        }
+                    }
 
                     # Invoke the editor
                     if {[catch {exec -ignorestderr >@stdout <@stdin {*}$editor $portfile} result]} {
@@ -3773,6 +3798,39 @@ proc action_portcmds { action portlist opts } {
                         }
                     } else {
                         ui_error [format "No homepage for %s" $portname]
+                    }
+                }
+                history {
+                    set tmpdir [pwd]
+                    if {[file exists "/tmp"]} {set tmpdir "/tmp"}
+                    catch {set tmpdir $::env(TMPDIR)}
+                    set tmpfname [file join $tmpdir [join [list $portname "-history-" [pid] ".log"] ""]]
+                    puts "Commit history for port:$portname ($portfile):\n"
+                    if {[macports::ui_isset ports_verbose]} {
+                        # include diffs
+                        set opt "--color=always -p"
+                    } else {
+                        # include just a summary of the changes
+                        set opt "--no-color --summary"
+                    }
+                    if {[catch {system -W $portdir \
+                        "git log --decorate=full --source --full-diff $opt . > $tmpfname"} \
+                        result]} {
+                        ui_debug $::errorInfo
+                        file delete -force $tmpfname
+                        break_softcontinue "unable to invoke git: $result" 1 status
+                    }
+                    if {[file exists $tmpfname]} {
+                        if {[catch {set fp [open $tmpfname r]} result]} {
+                            break_softcontinue "Could not open file $tmpfname: $result" 1 status
+                        }
+                        set history [read $fp]
+                        set history [split $history "\n"]
+                        foreach line $history {
+                            puts "$line"
+                        }
+                        close $fp
+                        file delete -force $tmpfname
                     }
                 }
             }
@@ -4019,6 +4077,7 @@ set action_array [dict create \
     diagnose    [list action_diagnose       [ACTION_ARGS_NONE]] \
     \
     version     [list action_version        [ACTION_ARGS_NONE]] \
+    environment [list action_environment    [ACTION_ARGS_NONE]] \
     platform    [list action_platform       [ACTION_ARGS_NONE]] \
     \
     uninstall   [list action_uninstall      [ACTION_ARGS_PORTS]] \
@@ -4047,6 +4106,7 @@ set action_array [dict create \
     file        [list action_portcmds       [ACTION_ARGS_PORTS]] \
     logfile     [list action_portcmds       [ACTION_ARGS_PORTS]] \
     gohome      [list action_portcmds       [ACTION_ARGS_PORTS]] \
+    history     [list action_portcmds       [ACTION_ARGS_PORTS]] \
     \
     fetch       [list action_target         [ACTION_ARGS_PORTS]] \
     checksum    [list action_target         [ACTION_ARGS_PORTS]] \
@@ -4074,6 +4134,9 @@ set action_array [dict create \
     mdmg        [list action_target         [ACTION_ARGS_PORTS]] \
     mpkg        [list action_target         [ACTION_ARGS_PORTS]] \
     pkg         [list action_target         [ACTION_ARGS_PORTS]] \
+    dpkg        [list action_target         [ACTION_ARGS_PORTS]] \
+    rpm         [list action_target         [ACTION_ARGS_PORTS]] \
+    srpm        [list action_target         [ACTION_ARGS_PORTS]] \
     \
     snapshot    [list action_snapshot       [ACTION_ARGS_STRINGS]] \
     restore     [list action_restore        [ACTION_ARGS_STRINGS]] \
@@ -4176,6 +4239,7 @@ set cmd_opts_array [dict create {*}{
     snapshot    {create list {diff 1} all {delete 1} help {note 1}}
     restore     {{snapshot-id 1} all last}
     migrate     {continue all}
+    dpkg        {no-deps}
 }]
 
 ##
@@ -4229,6 +4293,8 @@ proc parse_options { action ui_options_name global_options_name } {
 
     set options_order(${action}) {}
 
+    # RJVB
+    set global_options(ports_ignore_different) yes
     while {[moreargs]} {
         set arg [lookahead]
 
@@ -4276,6 +4342,9 @@ proc parse_options { action ui_options_name global_options_name } {
             set opts [string range $arg 1 end]
             foreach c [split $opts {}] {
                 switch -- $c {
+                    e {
+                        set ui_options(ports_env) yes
+                    }
                     v {
                         set ui_options(ports_verbose) yes
                     }
@@ -4831,7 +4900,9 @@ namespace eval portclient::progress {
             }
             update {
                 lassign $args now total
-                if {[showProgress $now $total] eq "yes"} {
+                # Check on each update if we're still outputting to a tty - the user can
+                # have pushed us into the background.
+                if {[processIsForeground] && ([showProgress $now $total] eq "yes")} {
                     set barPrefix "      "
                     set barPrefixLen [string length $barPrefix]
                     if {$total != 0} {
@@ -4843,11 +4914,13 @@ namespace eval portclient::progress {
             }
             intermission -
             finish {
-                # erase to start of line
-                ::term::ansi::send::esol
-                # return cursor to start of line
-                puts -nonewline "\r"
-                flush stdout
+                if {[processIsForeground]} {
+                    # erase to start of line
+                    ::term::ansi::send::esol
+                    # return cursor to start of line
+                    puts -nonewline "\r"
+                    flush stdout
+                }
             }
         }
 
@@ -4879,7 +4952,9 @@ namespace eval portclient::progress {
             }
             update {
                 lassign $args type total now speed
-                if {[showProgress $now $total] eq "yes"} {
+                # Check on each update if we're still outputting to a tty - the user can
+                # have pushed us into the background.
+                if {[processIsForeground] && ([showProgress $now $total] eq "yes")} {
                     set barPrefix "      "
                     set barPrefixLen [string length $barPrefix]
                     if {$total != 0} {
@@ -4898,11 +4973,13 @@ namespace eval portclient::progress {
                 }
             }
             finish {
-                # erase to start of line
-                ::term::ansi::send::esol
-                # return cursor to start of line
-                puts -nonewline "\r"
-                flush stdout
+                if {[processIsForeground]} {
+                    # erase to start of line
+                    ::term::ansi::send::esol
+                    # return cursor to start of line
+                    puts -nonewline "\r"
+                    flush stdout
+                }
             }
         }
 

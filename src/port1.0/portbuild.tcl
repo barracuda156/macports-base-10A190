@@ -148,17 +148,25 @@ proc portbuild::build_getjobs {args} {
     # if set to '0', use the number of cores for the number of jobs
     if {$jobs == 0} {
         macports_try -pass_signal {
-            set jobs [sysctl hw.activecpu]
+            if {[option os.platform] eq "linux"} {
+                set jobs [exec nproc]
+            } else {
+                set jobs [sysctl hw.activecpu]
+            }
         } on error {} {
             set jobs 2
-            ui_warn "failed to determine the number of available CPUs (probably not supported on this platform)"
+                        ui_warn "failed to determine the number of available CPUs (probably not supported on this platform: $::errorInfo)"
             ui_warn "defaulting to $jobs jobs, consider setting buildmakejobs to a nonzero value in macports.conf"
         }
 
         macports_try -pass_signal {
-            set memsize [sysctl hw.memsize]
-            if {$jobs > $memsize / (1024 * 1024 * 1024) + 1} {
-                set jobs [expr {$memsize / (1024 * 1024 * 1024) + 1}]
+            if {[option os.platform] eq "linux"} {
+                set memsize [expr [exec sed -e "s|MemTotal:\[ \]*||g" -e "s| kB.*||g" -e 1q /proc/meminfo] / (1024 * 1024)]
+            } else {
+                set memsize [expr [sysctl hw.memsize] / (1024 * 1024 * 1024)]
+            }
+            if {$jobs > $memsize + 1} {
+                set jobs [expr {$memsize + 1}]
             }
         } on error {} {}
     }

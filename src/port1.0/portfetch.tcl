@@ -65,7 +65,10 @@ commands svn
 default extract.suffix .tar.gz
 default fetch.type standard
 
-default bzr.cmd {[findBinary bzr $portutil::autoconf::bzr_path]}
+#default bzr.cmd {[findBinary bzr $portutil::autoconf::bzr_path]}
+# accessing ${prefix_frozen} directly here used to work, now we need a wrapper
+# (At least for building MacPorts?)
+default bzr.cmd {[portfetch::find_bzr_path]}
 default bzr.dir {${workpath}}
 default bzr.revision -1
 default bzr.pre_args {--builtin --no-aliases checkout --lightweight --verbose}
@@ -206,11 +209,16 @@ proc portfetch::set_fetch_type {option action args} {
 proc portfetch::find_git_path {args} {
     global prefix_frozen os.platform os.major
     # Oldest macOS version whose git can validate GitHub's SSL certificate.
-    if {${os.major} >= 14 || ${os.platform} ne "darwin"} {
-        return [findBinary git $portutil::autoconf::git_path]
-    } else {
+#     if {${os.major} >= 14 || ${os.platform} ne "darwin"} {
+#         return [findBinary git $portutil::autoconf::git_path]
+#     } else {
         return ${prefix_frozen}/bin/git
-    }
+#     }
+}
+
+proc portfetch::find_bzr_path {args} {
+    global prefix_frozen
+    return ${prefix_frozen}/bin/bzr
 }
 
 set_ui_prefix
@@ -552,7 +560,19 @@ proc portfetch::fetchfiles {args} {
                     set fetched 1
                     break
                 } on error {eMessage} {
-                    ui_debug [msgcat::mc "Fetching distfile failed: %s" $eMessage]
+                    ui_warn [msgcat::mc "Fetching distfile failed: %s" $eMessage]
+                    ui_debug "complete command:"
+                    ui_debug "curl fetch {*}$fetch_options $file_url \"${distpath}/${distfile}.TMP\""
+                    if {${eMessage} eq "gnutls_handshake() failed: Handshake failed"} {
+                        if {![catch {system "curl -L $file_url -o \"${distpath}/${distfile}.TMP\""} err]} {
+                            ui_debug [msgcat::mc "Fetching distfile succeeded via curl"]
+                            file rename -force "${distpath}/${distfile}.TMP" "${distpath}/${distfile}"
+                            set fetched 1
+                            break
+                        } else {
+                            ui_warn [msgcat::mc "Fetching distfile failed also via curl: %s" $err]
+                        }
+                    }
                     set lastError $eMessage
                 } finally {
                     file delete -force "${distpath}/${distfile}.TMP"

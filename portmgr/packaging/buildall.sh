@@ -97,6 +97,9 @@ make clean
 echo "file:///darwinports/dports" > /opt/local/etc/ports/sources.conf
 echo "BatchMode yes" >> /etc/ssh_config
 EOF
+	if [ "$PKGTYPE" = "dpkg" ]; then
+	    echo "/opt/local/bin/port install dpkg" >> $dir/bootstrap.sh
+	fi
 	chmod 755 $dir/bootstrap.sh
 	echo "Bootstrapping darwinports in chroot"
 	/sbin/mount_devfs devfs ${dir}/dev
@@ -134,7 +137,7 @@ teardownchroot() {
 
 # main:  This is where we start the show.
 TGTPORTS=""
-PKGTYPE=mpkg
+PKGTYPE=rpmpackage
 
 if [ $# -lt 1 ]; then
 	echo "Usage: $0 chrootdir [-p pkgtype] [targetportsfile]"
@@ -204,6 +207,10 @@ for pkg in `cat $TGTPORTS`; do
 		echo $pkg >> outputdir/summary/portspackaged
 		if [ "$PKGTYPE" = "mpkg" ]; then
 		    mv $DIR/Package/*.mpkg outputdir/Packages/
+		elif [ "$PKGTYPE" = "rpmpackage" ]; then
+		    mv $DIR/Package/RPMS/${ARCH}/*.rpm outputdir/Packages/
+		elif [ "$PKGTYPE" = "dpkg" ]; then
+		    mv $DIR/Package/*.deb outputdir/Packages/
 		fi
 		type="succeeded"
 	fi
