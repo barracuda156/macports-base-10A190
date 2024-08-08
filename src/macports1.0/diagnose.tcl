@@ -845,7 +845,7 @@ namespace eval diagnose {
     }
 
     proc check_archs {} {
-        set known_archs [list arm64 i386 ppc ppc64 x86_64]
+        set known_archs [list arm64 i386 ppc ppc64 riscv64 x86_64]
         if {($macports::os_subplatform eq "macosx" && [llength $macports::build_arch] != 1)
                 || [llength $macports::build_arch] > 1} {
             ui_warn "build_arch should contain one architecture name, but it is currently '$macports::build_arch'"

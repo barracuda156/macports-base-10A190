@@ -519,7 +519,7 @@ proc portconfigure::configure_get_archflags {tool} {
             $tool in {cc cxx objc objcxx}
         } then {
             set flags "-arch ${configure.build_arch}"
-        } elseif {${configure.build_arch} in [list arm64 ppc64 x86_64]} {
+        } elseif {${configure.build_arch} in [list arm64 ppc64 riscv64 x86_64]} {
             set flags "-m64"
         } elseif {${configure.compiler} ne "gcc-3.3"} {
             set flags "-m32"
@@ -1402,13 +1402,13 @@ proc portconfigure::get_compiler_fallback {} {
         set compilers [list "cc"]
     }
     lappend compilers {*}${system_compilers}
-    # when building for PowerPC architectures, prefer GCC to Clang
+    # when building for PowerPC or RISC-V architectures, prefer GCC to Clang
     set cur_arch ${configure.build_arch}
     if {$cur_arch eq ""} {
         global build_arch
         set cur_arch ${build_arch}
     }
-    if {$cur_arch in {ppc ppc64}} {
+    if {$cur_arch in {ppc ppc64 riscv64}} {
         lappend compilers {*}${gcc_compilers}
         lappend compilers {*}${clang_compilers}
     } else {
