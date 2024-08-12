@@ -106,7 +106,8 @@ proc portprogress::target_progress_callback {event} {
                 }
             }
 
-            if {${determinate_match} || ${indeterminate}} {
+            # only show progress when there is some to show.
+            if {${determinate_match} && !${indeterminate}} {
                 ui_progress_generic update ${cur} ${total}
             }
         }

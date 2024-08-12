@@ -129,7 +129,7 @@ proc run_target {port target options} {
         return 0
     }
 
-    if {![catch {set mport [mportopen_installed [$port name] [$port version] [$port revision] [$port variants] $options]}]} {
+    if {![catch {set mport [mportopen_installed [$port name] [$port version] [$port revision] [$port variants] $options]} err]} {
         set failed 0
         if {[catch {mportexec $mport $target} result]} {
             ui_debug $::errorInfo
@@ -167,7 +167,7 @@ proc run_target {port target options} {
         }
     } else {
         ui_debug $::errorInfo
-        ui_warn "Failed to open Portfile from registry for $portspec"
+        ui_warn "Failed to open Portfile from registry for $portspec ($err); registry=[$port portfile]"
     }
     return 0
 }

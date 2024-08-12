@@ -96,6 +96,29 @@ proc handle_option {option args} {
 }
 
 ##
+# Handle option-contains
+#
+# @param option name of the option
+# @param args arguments, can contain one of lsearch's options
+proc handle_option-contains {option args} {
+    global $option user_options option_procs
+
+    if {![info exists user_options($option)] && [info exists $option]} {
+        set arg0 [lindex $args 0]
+        if {[string index $arg0 0] eq "-"} {
+            set searchopt $arg0
+            set args [lrange $args 1 end]
+        } else {
+            set searchopt "-exact"
+        }
+        if {[lsearch $searchopt [set $option] $args] >= 0} {
+            return yes
+        }
+    }
+    return no
+}
+
+##
 # Handle option-append
 #
 # @param option name of the option
@@ -180,6 +203,7 @@ proc handle_option-replace {option args} {
 proc options {args} {
     foreach option $args {
         interp alias {} $option {} handle_option $option
+        interp alias {} $option-contains {} handle_option-contains $option
         interp alias {} $option-append {} handle_option-append $option
         interp alias {} $option-prepend {} handle_option-prepend $option
         interp alias {} $option-delete {} handle_option-delete $option
@@ -464,7 +488,7 @@ proc command_exec {args} {
     array set env [array get ${varprefix}.env_array]
     # Call the command.
     set fullcmdstring "$command_prefix $cmdstring $command_suffix"
-    ui_info "Executing: $fullcmdstring"
+    ui_debug "Executing: $fullcmdstring"
     set code [catch {system {*}$notty {*}$callback {*}$nice $fullcmdstring} result]
     # Save variables in order to re-throw the same error code.
     set errcode $::errorCode
@@ -1533,7 +1557,8 @@ proc target_run {ditem} {
 
                 # For {} blocks in the Portfile, export DEVELOPER_DIR to prevent Xcode binaries if shouldn't be used
                 set env(DEVELOPER_DIR) [option configure.developer_dir]
-                if {$result == 0} {
+                set is_stub [string match *setup_stub_linux [info proc stub::setup_stub_linux]]
+                if {$result == 0 && $is_stub == 0} {
                     foreach pre [ditem_key $ditem pre] {
                         ui_debug "Executing $pre"
                         set result [catch {$pre $targetname} errstr]
@@ -1552,7 +1577,7 @@ proc target_run {ditem} {
                     set errinfo $::errorInfo
                 }
 
-                if {$result == 0} {
+                if {$result == 0 && $is_stub == 0} {
                     foreach post [ditem_key $ditem post] {
                         ui_debug "Executing $post"
                         set result [catch {$post $targetname} errstr]
@@ -2659,14 +2684,44 @@ proc PortGroup {group version} {
         }
     }
 
-    set groupFile [getportresourcepath $porturl "port1.0/group/${group}-${version}.tcl"]
+    # optionally look first in the port's own tree (the old default behaviour)
+    set ownfirst [lsearch [getlocaltreeoptions [file dirname [getportresourcepath $porturl]]] own_portgroups_first]
+    if {${ownfirst} >= 0} {
+        # check if the requested PortGroup exists in the current port's ports tree, but
+        # don't return a fallback variant.
+        set groupFile [getportresourcepath $porturl "port1.0/group/${group}-${version}.tcl" no]
+    }
+    if {![info exists groupFile] || ![file exists ${groupFile}]} {
+        # no luck, scan the ports tree list in much the same way port lookup works:
+        # test each tree in the order they are listed in sources.conf, until a hit is found.
+        set lsources [getlocalporttreelist]
+        foreach source ${lsources} {
+            set groupFile [file join ${source} _resources port1.0/group/${group}-${version}.tcl]
+            if {[file exists ${groupFile}]} {
+                ui_debug "PortGroup ${group} ${version} found in $source"
+                break
+            }
+        }
+        if {![info exists groupFile] || ![file exists ${groupFile}]} {
+            # still nothing; redo the resource lookup but this time with a fallback.
+            # This should catch situations where port trees are configured with a
+            # protocol that is not "file://".
+            set groupFile [getportresourcepath $porturl "port1.0/group/${group}-${version}.tcl"]
+        }
+    } else {
+        ui_debug "Custom PortGroup ${group} ${version} found: $groupFile"
+    }
 
     if {[file exists $groupFile]} {
         lappend PortInfo(portgroups) [list $group $version $groupFile]
         uplevel [list source $groupFile]
-        ui_debug "Sourcing PortGroup $group $version from $groupFile"
+        ui_debug "Sourced PortGroup $group $version from $groupFile"
     } else {
         ui_error "${subport}: PortGroup ${group} ${version} could not be located. ${group}-${version}.tcl does not exist."
+        ui_info "         Trees checked: [getallporttrees]"
+        if {${ownfirst} >= 0} {
+            ui_info "         Also checked for [getportresourcepath $porturl "port1.0/group/${group}-${version}.tcl" no]"
+        }
         return -code error "PortGroup not found"
     }
 }

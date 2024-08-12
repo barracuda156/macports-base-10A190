@@ -286,8 +286,8 @@ proc macports::ch_logging {mport} {
     file mkdir $logdir
     set debuglogname [file join $logdir main.log]
 
-    # Append to the file if it already exists
-    set debuglog [open $debuglogname a]
+    # Truncate the file if it already exists
+    set debuglog [open $debuglogname w]
     puts $debuglog version:1
 
     ui_debug "Starting logging for $portname @[dict get $portinfo version]_[dict get $portinfo revision][dict get $portinfo canonical_active_variants]"
@@ -399,6 +399,13 @@ proc ui_message {priority prefix args} {
            error "$hint\nusage: ui_message priority prefix ?-nonewline? string"
        }
     } 
+
+    # adopt msg priority if the current phase equals the current priority
+    # this can only happen for ui_info during `port info` (currently).
+    if {[info exists current_phase]
+        && ${current_phase} eq ${priority}} {
+        set priority "msg"
+    }
 
     foreach chan $channels($priority) {
         if {[lindex $args 0] eq "-nonewline"} {
@@ -1247,7 +1254,7 @@ proc mportinit {{up_ui_options {}} {up_options {}} {up_variations {}}} {
             if {[regexp $sources_conf_source_re $line _ url flags]} {
                 set flags [split $flags ,]
                 foreach flag $flags {
-                    if {$flag ni [list nosync default]} {
+                    if {$flag ni [list nosync default own_portgroups_first]} {
                         ui_warn "$sources_conf source '$line' specifies invalid flag '$flag'"
                     }
                     if {$flag eq "default"} {
@@ -1257,13 +1264,13 @@ proc mportinit {{up_ui_options {}} {up_options {}} {up_variations {}}} {
                         set sources_default [concat [list $url] $flags]
                     }
                 }
-                if {[string match rsync://*rsync.macports.org/release/ports/ $url]} {
-                    ui_warn "MacPorts is configured to use an unsigned source for the ports tree.\
-Please edit sources.conf and change '$url' to '[string range $url 0 end-14]macports/release/tarballs/ports.tar'."
-                } elseif {[string match rsync://rsync.macports.org/release/* $url]} {
-                    ui_warn "MacPorts is configured to use an older rsync URL for the ports tree.\
-Please edit sources.conf and change '$url' to '[string range $url 0 26]macports/release/tarballs/ports.tar'."
-                }
+#                 if {[string match rsync://*rsync.macports.org/release/ports/ $url]} {
+#                     ui_warn "MacPorts is configured to use an unsigned source for the ports tree.\
+# Please edit sources.conf and change '$url' to '[string range $url 0 end-14]macports/release/tarballs/ports.tar'."
+#                 } elseif {[string match rsync://rsync.macports.org/release/* $url]} {
+#                     ui_warn "MacPorts is configured to use an older rsync URL for the ports tree.\
+# Please edit sources.conf and change '$url' to '[string range $url 0 26]macports/release/tarballs/ports.tar'."
+#                 }
                 switch -- [macports::getprotocol $url] {
                     rsync -
                     https -
@@ -1901,9 +1908,9 @@ match macports.conf.default."
         set default_source_url [lindex $sources_default 0]
         if {[macports::getprotocol $default_source_url] eq "file" || [macports::getprotocol $default_source_url] eq "rsync"} {
             set default_portindex [macports::getindex $default_source_url]
-            if {[file exists $default_portindex] && [clock seconds] - [file mtime $default_portindex] > 1209600} {
-                ui_warn "port definitions are more than two weeks old, consider updating them by running 'port selfupdate'."
-            }
+#             if {[file exists $default_portindex] && [clock seconds] - [file mtime $default_portindex] > 1209600} {
+#                 ui_warn "port definitions are more than two weeks old, consider updating them by running 'port selfupdate'."
+#             }
         }
     }
 
@@ -2051,6 +2058,9 @@ proc macports::worker_init {workername portpath porturl portbuildpath options va
     $workername alias getportresourcepath macports::getportresourcepath
     $workername alias getportlogpath macports::getportlogpath
     $workername alias getdefaultportresourcepath macports::getdefaultportresourcepath
+    $workername alias getlocalporttreelist macports::getlocalporttreelist
+    $workername alias getlocaltreeoptions macports::getlocaltreeoptions
+    $workername alias getallporttrees macports::getallporttrees
     $workername alias getprotocol macports::getprotocol
     $workername alias getportdir macports::getportdir
     $workername alias findBinary macports::findBinary
@@ -2061,6 +2071,9 @@ proc macports::worker_init {workername portpath porturl portbuildpath options va
     $workername alias _portnameactive _portnameactive
     $workername alias get_actual_cxx_stdlib macports::get_actual_cxx_stdlib
     $workername alias shellescape macports::shellescape
+    ## RJVB
+    $workername alias get_logfile macports::get_logfile
+    $workername alias flush_logfile macports::flush_logfile
 
     # New Registry/Receipts stuff
     $workername alias registry_new registry::new_entry
@@ -2400,6 +2413,44 @@ proc macports::getdefaultportresourcepath {{path {}}} {
     return $proposedpath
 }
 
+##
+# @return the list of local port trees
+#
+proc macports::getlocalporttreelist {} {
+    global macports::sources
+    set sourcetreelist {}
+    foreach source $sources {
+        if {[macports::getprotocol $source] eq "file"} {
+            lappend sourcetreelist [string range [lindex ${source} 0] 7 end]
+        }
+    }
+    return ${sourcetreelist}
+}
+
+##
+# @return the options for local port tree @param tree
+#
+proc macports::getlocaltreeoptions {path} {
+    global macports::sources
+    set sourcetreelist {}
+    set path [file normalize ${path}]
+    foreach source $sources {
+        set spath [file normalize [string range [lindex ${source} 0] 7 end]]
+        if {${spath} eq ${path}} {
+            return [lrange ${source} 1 end]
+        }
+    }
+    return {}
+}
+
+proc macports::getallporttrees {} {
+    global macports::sources
+    set sourcetreelist {}
+    foreach source $sources {
+        lappend sourcetreelist [lindex ${source} 0]
+    }
+    return ${sourcetreelist}
+}
 
 ##
 # Opens a MacPorts portfile specified by a URL. The URL can be local (starting
@@ -2482,6 +2533,72 @@ proc mportopen {porturl {options {}} {variations {}} {nocache {}}} {
     # are conditional on whether universal is set
     $workername eval [list universal_setup]
 
+    $workername eval {
+        if {${os.platform} eq "linux"} {
+            if {[info exist PortInfo(variants)] && ![variant_exists fromHost]} {
+                set fhconfs ""
+                foreach v $PortInfo(variants) {
+                    if {${v} ne "fromHost"} {
+                        set fhconfs "${fhconfs} ${v}"
+                    }
+                }
+                variant fromHost conflicts [list {*}${fhconfs}] description \
+                    {assume the host already provides this port via distro packages, typically with the dev package included.} {}
+            } else {
+                variant fromHost description \
+                    {assume the host already provides this port via distro packages, typically with the dev package included.} {}
+            }
+            if {[variant_exists fromHost] && [info exist PortInfo(variants)] && [info exists PortInfo(vinfo)]} {
+                array unset vinfo
+                array set vinfo $PortInfo(vinfo)
+                foreach v $PortInfo(variants) {
+                    if {${v} eq "fromHost"} {
+                        continue
+                    }
+                    # if we're in the clear for ${v} vs. fromHost we can record
+                    # the conflict to inform the user via `port variants`:
+                    array unset variant
+                    if {[info exist vinfo(${v})] && [catch {array set variant $vinfo(${v})} err]} {
+                        # my KF5 ports trigger this??
+                        ui_debug "vinfo(${v})=\"$vinfo(${v})\" error is <${err}>; skipping"
+                        continue
+                    }
+                    if {[info exists variant(conflicts)]} {
+                        ui_debug "${v}: conflicts with $variant(conflicts), adding +fromHost"
+                        set newConflicts [join [lsort "$variant(conflicts) fromHost"]]
+                    } else {
+                        ui_debug "${v}: adding conflict with +fromHost"
+                        set newConflicts "fromHost"
+                    }
+                    array set variant [list conflicts ${newConflicts}]
+                    array set vinfo [list ${v} [array get variant]]
+                    array set PortInfo [list vinfo [array get vinfo]]
+                }
+            }
+            if {[variant_exists fromHost] && [variant_isset fromHost]} {
+                PortGroup stub 1.0
+                if {${subport} ne ${name}} {
+                    long_description-append \nNB: Stub because of +fromHost\; make sure you have all \
+                        the required distro packages installed to use and build against \"${subport}\" and/or \"${name}\"!
+                } else {
+                    long_description-append \nNB: Stub because of +fromHost\; make sure you have all \
+                        the required distro packages installed to use and build against \"${subport}\"!
+                }
+                fetch {}
+                depends_fetch
+                depends_extract
+                depends_lib
+                depends_build
+            }
+        }
+        if {![variant_exists fromHost] || ![variant_isset fromHost]} {
+            # Import a (possibly) local PortGroup that auto-adds
+            # missing X-dev build dependencies for dependencies
+            # known to have such an associated port.
+            catch {PortGroup devport_helper 1.0}
+        }
+    }
+
     # evaluate the variants
     if {[$workername eval [list eval_variants variations]] != 0} {
         mportclose $mport
@@ -2489,6 +2606,16 @@ proc mportopen {porturl {options {}} {variations {}} {nocache {}}} {
     }
 
     $workername eval [list port::run_callbacks]
+
+    $workername eval {
+        if {[variant_exists fromHost] && [variant_isset fromHost]} {
+            ui_debug "+fromHost resetting late-added dependencies"
+            depends_fetch
+            depends_extract
+            depends_lib
+            depends_build
+        }
+    }
 
     set actual_subport [$workername eval [list set PortInfo(name)]]
     if {[$workername eval [list info exists user_options(subport)]]} {
@@ -5713,6 +5840,11 @@ proc macports::revupgrade_update_binary {fancy_output {revupgrade_progress ""}} 
 # @param revupgrade_progress
 #        Progress display callback name
 proc macports::revupgrade_update_cxx_stdlib {fancy_output {revupgrade_progress ""}} {
+    global macports::os_platform
+    if {$macports::os_platform ne "darwin"} {
+        ui_debug "Skipping C++ stdlib checks on $macports::os_platform"
+        return
+    }
     set maybe_cxx_ports [registry::entry search state installed cxx_stdlib -null]
     set maybe_cxx_len [llength $maybe_cxx_ports]
     if {$maybe_cxx_len > 0} {
@@ -6025,16 +6157,22 @@ proc macports::revupgrade_scanandrebuild {broken_port_counts_name options} {
         }
 
         # check for mismatched cxx_stdlib
-        if {${cxx_stdlib} eq "libc++"} {
-            set wrong_stdlib libstdc++
+        if {$macports::os_platform eq "darwin"} {
+            ui_debug "Checking for erroneous use of $wrong_stdlib"
+            if {${cxx_stdlib} eq "libc++"} {
+                set wrong_stdlib libstdc++
+            } else {
+                set wrong_stdlib libc++
+            }
+            set broken_cxx_ports [registry::entry search state installed cxx_stdlib_overridden 0 cxx_stdlib $wrong_stdlib]
+            foreach cxx_port $broken_cxx_ports {
+                ui_warn "[$cxx_port name] is using $wrong_stdlib (this installation is configured to use ${cxx_stdlib})"
+            }
+            set broken_ports [lsort -unique [concat $broken_ports $broken_cxx_ports]]
         } else {
-            set wrong_stdlib libc++
+            # just using a different cxx_stdlib isn't necessarily an error if it works!
+            set broken_ports [lsort -unique [concat $broken_ports]]
         }
-        set broken_cxx_ports [registry::entry search state installed cxx_stdlib_overridden 0 cxx_stdlib $wrong_stdlib]
-        foreach cxx_port $broken_cxx_ports {
-            ui_info "[$cxx_port name] is using $wrong_stdlib (this installation is configured to use ${cxx_stdlib})"
-        }
-        set broken_ports [lsort -unique [concat $broken_ports $broken_cxx_ports]]
 
         if {[llength $broken_ports] == 0} {
             ui_msg "$ui_prefix No broken ports found."
@@ -6619,6 +6757,24 @@ proc macports::shellescape {arg} {
     # may not be an exhaustive list of safe characters but it is allowed
     # to put a backslash in front of safe characters too.
     return [regsub -all -- {[^A-Za-z0-9.:@%/+=_-]} $arg {\\&}]
+}
+
+## RJVB
+# return the logfile name, or an empty string
+proc macports::get_logfile {} {
+	if {[info exists ::debuglogname]} {
+		return $::debuglogname
+	} else {
+		return ""
+	}
+}
+proc macports::flush_logfile {} {
+	if {[info exists ::debuglog]} {
+		flush $::debuglog
+		return yes
+	} else {
+		return no
+	}
 }
 
 ##

@@ -1688,6 +1688,7 @@ proc action_info { action portlist opts } {
         return 1
     }
 
+    set_phase "info"
     set separator ""
     global global_variations global_options
     set gvariations [dict create {*}[array get global_variations]]
@@ -2218,11 +2219,16 @@ proc action_activate { action portlist opts } {
     }
     foreachport $portlist {
         set composite_version [composite_version $portversion $variations]
+        if {[dict exists $options ports_force]} {
+            set force 1
+        } else {
+            set force 0
+        }
         if {[catch {registry_installed $portname $composite_version} result]} {
             break_softcontinue "port activate failed: $result" 1 status
         }
         set regref $result
-        if {![dict exists $options ports_activate_no-exec] &&
+        if {![dict exists $options ports_activate_no-exec] && !$force &&
             [registry::run_target $regref activate $options]
         } then {
             continue
@@ -3775,7 +3781,7 @@ proc action_portcmds { action portlist opts } {
                     set editor_var "ports_${action}_editor"
                     if {[dict exists $opts $editor_var]} {
                         set editor [join [dict get $opts $editor_var]]
-                    } else {
+                    } elseif {![macports::global_option_isset ports_force]} {
                         foreach ed { MP_EDITOR VISUAL EDITOR } {
                             if {[info exists env($ed)]} {
                                 set editor $env($ed)
@@ -3785,7 +3791,14 @@ proc action_portcmds { action portlist opts } {
                     }
 
                     # Use a reasonable canned default if no editor specified or set in env
-                    if { $editor eq "" } { set editor "/usr/bin/vi" }
+                    # or the user used the -f option to bypass any custom settings.
+                    if { $editor eq "" } {
+                        if {[file exists ${macports::prefix}/bin/vim]} {
+                            set editor "${macports::prefix}/bin/vim"
+                        } else {
+                            set editor "/usr/bin/vi"
+                        }
+                    }
 
                     # Invoke the editor
                     if {[catch {exec -ignorestderr >@stdout <@stdin {*}$editor $portfile} result]} {
@@ -3806,7 +3819,7 @@ proc action_portcmds { action portlist opts } {
                 work {
                     # output the path to the port's work directory
                     set workpath [macports::getportworkpath_from_portdir $portdir $portname]
-                    if {[file exists $workpath]} {
+                    if {[file exists $workpath] || [macports::global_option_isset ports_force]} {
                         puts $workpath
                     }
                 }
@@ -3861,6 +3874,39 @@ proc action_portcmds { action portlist opts } {
                         }
                     } else {
                         ui_error [format "No homepage for %s" $portname]
+                    }
+                }
+                history {
+                    set tmpdir [pwd]
+                    if {[file exists "/tmp"]} {set tmpdir "/tmp"}
+                    catch {set tmpdir $::env(TMPDIR)}
+                    set tmpfname [file join $tmpdir [join [list $portname "-history-" [pid] ".log"] ""]]
+                    puts "Commit history for port:$portname ($portfile):\n"
+                    if {[macports::ui_isset ports_verbose]} {
+                        # include diffs
+                        set opt "--color=always -p"
+                    } else {
+                        # include just a summary of the changes
+                        set opt "--no-color --summary"
+                    }
+                    if {[catch {system -W $portdir \
+                        "git log --decorate=full --source --full-diff $opt . > $tmpfname"} \
+                        result]} {
+                        ui_debug $::errorInfo
+                        file delete -force $tmpfname
+                        break_softcontinue "unable to invoke git: $result" 1 status
+                    }
+                    if {[file exists $tmpfname]} {
+                        if {[catch {set fp [open $tmpfname r]} result]} {
+                            break_softcontinue "Could not open file $tmpfname: $result" 1 status
+                        }
+                        set history [read $fp]
+                        set history [split $history "\n"]
+                        foreach line $history {
+                            puts "$line"
+                        }
+                        close $fp
+                        file delete -force $tmpfname
                     }
                 }
             }
@@ -4136,6 +4182,7 @@ set action_array [dict create \
     file        [list action_portcmds       [ACTION_ARGS_PORTS]] \
     logfile     [list action_portcmds       [ACTION_ARGS_PORTS]] \
     gohome      [list action_portcmds       [ACTION_ARGS_PORTS]] \
+    history     [list action_portcmds       [ACTION_ARGS_PORTS]] \
     \
     fetch       [list action_target         [ACTION_ARGS_PORTS]] \
     checksum    [list action_target         [ACTION_ARGS_PORTS]] \
@@ -4322,6 +4369,8 @@ proc parse_options { action ui_options_name global_options_name } {
 
     set options_order(${action}) {}
 
+    # RJVB
+    set global_options(ports_ignore_different) yes
     while {[moreargs]} {
         set arg [lookahead]
 
@@ -4926,7 +4975,9 @@ namespace eval portclient::progress {
             }
             update {
                 lassign $args now total
-                if {[showProgress $now $total] eq "yes"} {
+                # Check on each update if we're still outputting to a tty - the user can
+                # have pushed us into the background.
+                if {[processIsForeground] && ([showProgress $now $total] eq "yes")} {
                     set barPrefix "      "
                     set barPrefixLen [string length $barPrefix]
                     if {$total != 0} {
@@ -4938,11 +4989,13 @@ namespace eval portclient::progress {
             }
             intermission -
             finish {
-                # erase to start of line
-                ::term::ansi::send::esolch stderr
-                # return cursor to start of line
-                puts -nonewline stderr "\r"
-                flush stderr
+                if {[processIsForeground]} {
+                    # erase to start of line
+                    ::term::ansi::send::esolch stderr
+                    # return cursor to start of line
+                    puts -nonewline stderr "\r"
+                    flush stderr
+                }
             }
         }
 
@@ -4974,7 +5027,9 @@ namespace eval portclient::progress {
             }
             update {
                 lassign $args type total now speed
-                if {[showProgress $now $total] eq "yes"} {
+                # Check on each update if we're still outputting to a tty - the user can
+                # have pushed us into the background.
+                if {[processIsForeground] && ([showProgress $now $total] eq "yes")} {
                     set barPrefix "      "
                     set barPrefixLen [string length $barPrefix]
                     if {$total != 0} {
@@ -4993,11 +5048,13 @@ namespace eval portclient::progress {
                 }
             }
             finish {
-                # erase to start of line
-                ::term::ansi::send::esolch stderr
-                # return cursor to start of line
-                puts -nonewline stderr "\r"
-                flush stderr
+                if {[processIsForeground]} {
+                    # erase to start of line
+                    ::term::ansi::send::esolch stderr
+                    # return cursor to start of line
+                    puts -nonewline stderr "\r"
+                    flush stderr
+                }
             }
         }
 

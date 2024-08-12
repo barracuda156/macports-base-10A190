@@ -75,7 +75,8 @@ proc portinstall::create_archive {location archive.type} {
            epoch configure.cxx_stdlib cxx_stdlib PortInfo \
            archive.env archive.cmd archive.pre_args archive.args \
            archive.post_args archive.dir depends_lib depends_run \
-           portarchive_hfscompression
+           portarchive_hfscompression \
+           build.jobs prefix
     set archive.env {}
     set archive.cmd {}
     set archive.pre_args {}
@@ -127,6 +128,7 @@ proc portinstall::create_archive {location archive.type} {
                 set archive.cmd "$tar"
                 set archive.pre_args {-cvf}
                 if {[regexp {z2?$} ${archive.type}]} {
+                    set extraargs ""
                     if {[regexp {bz2?$} ${archive.type}]} {
                         if {![catch {binaryInPath lbzip2}]} {
                             set gzip "lbzip2"
@@ -140,8 +142,13 @@ proc portinstall::create_archive {location archive.type} {
                         set gzip "lzma"
                         set level ""
                     } elseif {[regexp {xz$} ${archive.type}]} {
-                        set gzip "xz"
+                        if {![catch {binaryInPath xz}]} {
+                            set gzip "xz"
+                        } else {
+                            set gzip "$prefix/sbin/xz"
+                        }
                         set level 6
+                        set extraargs "--threads=${build.jobs}"
                     } else {
                         set gzip "gzip"
                         set level 9
@@ -152,9 +159,9 @@ proc portinstall::create_archive {location archive.type} {
                         set hint ""
                     }
                     if {[catch {set gzip [findBinary $gzip $hint]} errmsg] == 0} {
-                        ui_debug "Using $gzip"
+                        ui_debug "Using $gzip -c$level $extraargs"
                         set archive.args {- .}
-                        set archive.post_args "| $gzip -c$level > [shellescape ${location}]"
+                        set archive.post_args "| $gzip -c$level $extraargs > [shellescape ${location}]"
                     } else {
                         ui_debug $errmsg
                         return -code error "No '$gzip' was found on this system!"

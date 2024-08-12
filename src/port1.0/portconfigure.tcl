@@ -81,13 +81,13 @@ proc portconfigure::should_add_stdlib {} {
     if {${configure.cxx_stdlib} eq ""} {
         return 0
     }
-    if {[string match *clang* ${configure.cxx}]} {
+    if {[string match *clang* ${configure.cxx}] || [string match *clazy* [option configure.cxx]]} {
         return 1
     }
     # GCC also supports -stdlib starting with GCC 10 (and devel), but
     # not with PPC builds
     global configure.build_arch
-    if {[string match *g*-mp-* ${configure.cxx}]
+    if {[string match */g*-mp-* ${configure.cxx}]
             && ${configure.build_arch} ni {ppc ppc64}} {
         # Do not pass stdlib to gcc if it is MacPorts custom macports-libstdc++ setting
         # as gcc does not uderstand this. Instead do nothing, which means gcc will
@@ -144,10 +144,10 @@ proc portconfigure::stdlib_trace {opt action args} {
 }
 # helper function to set configure.cxx_stdlib
 proc portconfigure::configure_get_cxx_stdlib {} {
-    global cxx_stdlib compiler.cxx_standard
+    global cxx_stdlib compiler.cxx_standard os.platform
     if {${compiler.cxx_standard} eq ""} {
         return ""
-    } elseif {${cxx_stdlib} eq "libstdc++" && ${compiler.cxx_standard} >= 2011} {
+    } elseif {${os.platform} eq "darwin" && ${cxx_stdlib} eq "libstdc++" && ${compiler.cxx_standard} >= 2011} {
         return macports-libstdc++
     } else {
         return ${cxx_stdlib}
@@ -266,7 +266,7 @@ proc portconfigure::configure_get_cppflags {} {
     if {${compiler.limit_flags}} {
         return {}
     } else {
-        return -I${prefix}/include
+        return -isystem${prefix}/include
     }
 }
 default configure.ldflags       {[portconfigure::configure_get_ldflags]}
@@ -275,7 +275,11 @@ proc portconfigure::configure_get_ldflags {} {
     if {${compiler.limit_flags}} {
         return -Wl,-headerpad_max_install_names
     } else {
-        return "-L${prefix}/lib -Wl,-headerpad_max_install_names"
+        if {[option os.platform] eq "darwin"} {
+            return "-L${prefix}/lib -Wl,-headerpad_max_install_names"
+        } else {
+            return "-L${prefix}/lib -Wl,--enable-new-dtags -Wl,-rpath,${prefix}/lib"
+        }
     }
 }
 default configure.libs          {}
@@ -375,6 +379,7 @@ proc portconfigure::configure_start {args} {
         {^llvm-gcc-4\.2$}                          {Xcode LLVM-GCC 4.2}
         {^macports-clang$}                         {MacPorts Clang (port select)}
         {^macports-clang-(\d+(?:\.\d+)?)$}         {MacPorts Clang %s}
+        {^macports-clazy-(\d+(?:\.\d+)?)$}         {MacPorts Clazy %s}
         {^macports-gcc$}                           {MacPorts GCC (port select)}
         {^macports-gcc-(\d+(?:\.\d+)?)$}           {MacPorts GCC %s}
         {^macports-llvm-gcc-4\.2$}                 {MacPorts LLVM-GCC 4.2}
@@ -405,15 +410,17 @@ proc portconfigure::configure_start {args} {
     if {${configure.ccache}} {
         global ccache_dir ccache_size macportsuser
         # Create ccache directory with correct permissions with root privileges
-        elevateToRoot "configure ccache"
-        if {[catch {
+        if {![file exists ${ccache_dir}] || [file type ${ccache_dir}] ne "directory"} {
+            try {
+                elevateToRoot "Set up ccache directory `${ccache_dir}`"
                 file mkdir ${ccache_dir}
                 file attributes ${ccache_dir} -owner ${macportsuser} -permissions 0755
-            } result]} {
-            ui_warn "ccache_dir ${ccache_dir} could not be created; disabling ccache: $result"
-            set configure.ccache no
+            } catch {{*} eCode eMessage} {
+                ui_warn "ccache_dir ${ccache_dir} could not be created; disabling ccache: $eMessage"
+                set configure.ccache no
+            }
+            dropPrivileges
         }
-        dropPrivileges
 
         # Initialize ccache directory with the given maximum size
         if {${configure.ccache}} {
@@ -750,6 +757,7 @@ proc portconfigure::compiler_port_name {compiler} {
     set valid_compiler_ports {
         {^apple-gcc-(\d+)\.(\d+)$}                                                    {apple-gcc%s%s}
         {^macports-clang-(\d+(?:\.\d+)?)$}                                            {clang-%s}
+        {^macports-clazy-(\d+(?:\.\d+)?)$}                                            {clazy-%s}
         {^macports-(llvm-)?gcc-(\d+)(?:\.(\d+))?$}                                    {%sgcc%s%s}
         {^macports-(mpich|openmpi|mpich-devel|openmpi-devel)-default$}                {%s-default}
         {^macports-(mpich|openmpi|mpich-devel|openmpi-devel)-clang$}                  {%s-clang}
@@ -794,8 +802,10 @@ proc portconfigure::configure_get_default_compiler {} {
     global compiler.blacklist compiler.fallback compiler.whitelist
     if {${compiler.whitelist} ne ""} {
         set search_list ${compiler.whitelist}
+        ui_debug "Picking compiler from whitelist ${search_list}"
     } else {
         set search_list ${compiler.fallback}
+        ui_debug "Picking compiler from fallbacks ${search_list}"
     }
     foreach compiler $search_list {
         set allowed yes
@@ -1337,6 +1347,7 @@ proc portconfigure::get_compiler_fallback {} {
 
     # Check our override
     if {[info exists default_compilers]} {
+        ui_debug "Taking fallback compilers from default_compilers=${default_compilers}"
         return $default_compilers
     }
 
@@ -1347,6 +1358,7 @@ proc portconfigure::get_compiler_fallback {} {
         } else {
             set available_apple_compilers [portconfigure::get_apple_compilers_xcode_version]
         }
+        ui_debug "available_apple_compilers=${available_apple_compilers}"
         set system_compilers [list]
         foreach c ${available_apple_compilers} {
             set vmin [portconfigure::get_min_command_line $c]
@@ -1384,7 +1396,11 @@ proc portconfigure::get_compiler_fallback {} {
             }
         }
     }
-    set compilers [list]
+    if {${os.platform} eq "darwin"} {
+        set compilers [list]
+    } else {
+        set compilers [list "cc"]
+    }
     lappend compilers {*}${system_compilers}
     # when building for PowerPC architectures, prefer GCC to Clang
     set cur_arch ${configure.build_arch}
@@ -1548,6 +1564,15 @@ proc portconfigure::configure_get_compiler {type {compiler {}}} {
             objcxx  { return ${prefix_frozen}/bin/clang++${suffix} }
             cpp     { return ${prefix_frozen}/bin/clang-cpp${suffix} }
         }
+    } elseif {[regexp {^macports-clazy(-\d+\.\d+)?$} $compiler -> suffix]} {
+        set suffix "-mp${suffix}"
+        switch $type {
+            cc      -
+            objc    { return ${prefix_frozen}/bin/clang${suffix} }
+            cxx     -
+            objcxx  { return ${prefix_frozen}/bin/clang++${suffix} }
+            cpp     { return ${prefix_frozen}/bin/clang-cpp${suffix} }
+        }
     } elseif {[regexp {^macports-gcc(-\d+(?:\.\d+)?)?$} $compiler -> suffix]} {
         if {$suffix ne ""} {
             set suffix "-mp${suffix}"
@@ -1670,7 +1695,15 @@ proc portconfigure::add_automatic_compiler_dependencies {} {
 port::register_callback portconfigure::add_automatic_compiler_dependencies
 # and an option to turn it off if required
 options configure.compiler.add_deps
-default configure.compiler.add_deps yes
+default configure.compiler.add_deps {[portconfigure::configure_get_add_deps]}
+proc portconfigure::configure_get_add_deps {} {
+    if {[option os.platform] eq "darwin"} {
+        return yes
+    } else {
+        return no
+    }
+}
+
 # helper function to add dependencies for a given compiler
 proc portconfigure::add_compiler_port_dependencies {compiler} {
     global os.major porturl

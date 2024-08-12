@@ -91,6 +91,7 @@ proc activate {name {version ""} {revision ""} {variants 0} {options ""}} {
         set rename_list [dict get $options portactivate_rename_files]
     }
     set todeactivate [list]
+    set actaction "Activating"
 
     registry::read {
 
@@ -104,9 +105,14 @@ proc activate {name {version ""} {revision ""} {variants 0} {options ""}} {
         set location [$requested location]
 
         if {[$requested state] eq "installed"} {
-            ui_info "${name} @${specifier} is already active."
-            #registry::entry close $requested
-            return
+            if {$force} {
+                set actaction "Reactivating"
+                lappend todeactivate $requested
+            } else {
+                ui_info "${name} @${specifier} is already active."
+                #registry::entry close $requested
+                return
+            }
         }
 
         # this shouldn't be possible
@@ -137,7 +143,7 @@ proc activate {name {version ""} {revision ""} {variants 0} {options ""}} {
             }
         }
 
-        ui_msg "$UI_PREFIX [format [msgcat::mc "Activating %s @%s"] $name $specifier]"
+        ui_msg "$UI_PREFIX [format [msgcat::mc "$actaction %s @%s"] $name $specifier]"
 
         _activate_contents $requested $rename_list
     } finally {
@@ -586,7 +592,8 @@ proc extract_archive_to_imagedir {location} {
         } else {
             set cmdstring "${unarchive.pipe_cmd} ( ${unarchive.cmd} ${unarchive.pre_args} ${unarchive.args} )"
         }
-        system -callback portimage::_extract_progress $cmdstring
+#         system -callback portimage::_extract_progress $cmdstring
+        system $cmdstring
     } on error {_ eOptions} {
         ::file delete -force $extractdir
         throw [dict get $eOptions -errorcode] [dict get $eOptions -errorinfo]
@@ -626,13 +633,14 @@ proc _extract_progress {event} {
     }
 }
 
-proc _progress {args} {
-    if {[macports::ui_isset ports_verbose]} {
-        return
-    }
-
-    ui_progress_generic {*}${args}
-}
+proc _progress {args} {}
+# {
+#     if {[macports::ui_isset ports_verbose]} {
+#         return
+#     }
+#
+#     ui_progress_generic {*}${args}
+# }
 
 ## Activates the contents of a port
 proc _activate_contents {port {rename_list {}}} {

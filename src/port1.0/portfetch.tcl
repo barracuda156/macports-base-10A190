@@ -560,7 +560,19 @@ proc portfetch::fetchfiles {args} {
                     set fetched 1
                     break
                 } on error {eMessage} {
-                    ui_debug [msgcat::mc "Fetching distfile failed: %s" $eMessage]
+                    ui_warn [msgcat::mc "Fetching distfile failed: %s" $eMessage]
+                    ui_debug "complete command:"
+                    ui_debug "curl fetch {*}$fetch_options $file_url \"${distpath}/${distfile}.TMP\""
+                    if {${eMessage} eq "gnutls_handshake() failed: Handshake failed"} {
+                        if {![catch {system "curl -L $file_url -o \"${distpath}/${distfile}.TMP\""} err]} {
+                            ui_debug [msgcat::mc "Fetching distfile succeeded via curl"]
+                            file rename -force "${distpath}/${distfile}.TMP" "${distpath}/${distfile}"
+                            set fetched 1
+                            break
+                        } else {
+                            ui_warn [msgcat::mc "Fetching distfile failed also via curl: %s" $err]
+                        }
+                    }
                     set lastError $eMessage
                 } finally {
                     file delete -force "${distpath}/${distfile}.TMP"
