@@ -88,7 +88,7 @@ proc portconfigure::should_add_stdlib {} {
     # not with PPC builds
     global configure.build_arch
     if {[string match */g*-mp-* ${configure.cxx}]
-            && ${configure.build_arch} ni {ppc ppc64}} {
+            && ${configure.build_arch} ni {ppc ppc64 riscv64}} {
         # Do not pass stdlib to gcc if it is MacPorts custom macports-libstdc++ setting
         # as gcc does not uderstand this. Instead do nothing, which means gcc will
         # default to using its own libstdc++, which is in fact what we mean by
@@ -521,7 +521,7 @@ proc portconfigure::configure_get_archflags {tool} {
             set flags "-arch ${configure.build_arch}"
         } elseif {${configure.build_arch} in [list arm64 ppc64 x86_64]} {
             set flags "-m64"
-        } elseif {${configure.compiler} ne "gcc-3.3"} {
+        } elseif {${configure.compiler} ne "gcc-3.3" && ${configure.build_arch} ne "riscv64"} {
             set flags "-m32"
         }
     }
@@ -1408,7 +1408,7 @@ proc portconfigure::get_compiler_fallback {} {
         global build_arch
         set cur_arch ${build_arch}
     }
-    if {$cur_arch in {ppc ppc64}} {
+    if {$cur_arch in {ppc ppc64 riscv64}} {
         lappend compilers {*}${gcc_compilers}
         lappend compilers {*}${clang_compilers}
     } else {
