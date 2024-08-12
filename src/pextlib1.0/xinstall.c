@@ -108,6 +108,8 @@ extern int copyfile(const char *from, const char *to, void *state,
 
 #ifndef HAVE_SETMODE
 #include "setmode.h"
+#else
+#include <bsd/unistd.h>
 #endif
 
 /* Bootstrap aid - this doesn't exist in most older releases */

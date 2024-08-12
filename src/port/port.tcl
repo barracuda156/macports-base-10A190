@@ -2167,6 +2167,11 @@ proc action_notes { action portlist opts } {
 }
 
 
+proc macports::normalize { filename } {
+    set prefmap [list [file dirname [file normalize "${macports::prefix}/foo"]] ${macports::prefix}]
+    return [string map ${prefmap} [file normalize $filename]]
+}
+
 proc action_provides { action portlist opts } {
     # In this case, portname is going to be used for the filename... since
     # that is the first argument we expect... perhaps there is a better way
@@ -2176,7 +2181,7 @@ proc action_provides { action portlist opts } {
         return 1
     }
     foreach filename $portlist {
-        set file [file normalize $filename]
+        set file [macports::normalize $filename]
         if {[file exists $file] || ![catch {file type $file}]} {
             if {![file isdirectory $file] || [file type $file] eq "link"} {
                 set port [registry::file_registered $file]
@@ -2658,6 +2663,12 @@ proc action_version { action portlist opts } {
     }
     puts [macports::version]
     return 0
+}
+
+
+proc action_environment { action portlist opts } {
+    set status [macports::environment]
+    return $status
 }
 
 
@@ -4096,6 +4107,7 @@ set action_array [dict create \
     diagnose    [list action_diagnose       [ACTION_ARGS_NONE]] \
     \
     version     [list action_version        [ACTION_ARGS_NONE]] \
+    environment [list action_environment    [ACTION_ARGS_NONE]] \
     platform    [list action_platform       [ACTION_ARGS_NONE]] \
     \
     uninstall   [list action_uninstall      [ACTION_ARGS_PORTS]] \
@@ -4151,6 +4163,9 @@ set action_array [dict create \
     mdmg        [list action_target         [ACTION_ARGS_PORTS]] \
     mpkg        [list action_target         [ACTION_ARGS_PORTS]] \
     pkg         [list action_target         [ACTION_ARGS_PORTS]] \
+    dpkg        [list action_target         [ACTION_ARGS_PORTS]] \
+    rpm         [list action_target         [ACTION_ARGS_PORTS]] \
+    srpm        [list action_target         [ACTION_ARGS_PORTS]] \
     \
     snapshot    [list action_snapshot       [ACTION_ARGS_STRINGS]] \
     restore     [list action_restore        [ACTION_ARGS_STRINGS]] \
@@ -4253,6 +4268,7 @@ set cmd_opts_array [dict create {*}{
     snapshot    {create list {diff 1} all {delete 1} help {note 1} {export 1} {import 1}}
     restore     {{snapshot-id 1} all last}
     migrate     {continue all}
+    dpkg        {no-deps}
 }]
 
 ##
@@ -4353,6 +4369,9 @@ proc parse_options { action ui_options_name global_options_name } {
             set opts [string range $arg 1 end]
             foreach c [split $opts {}] {
                 switch -- $c {
+                    e {
+                        set ui_options(ports_env) yes
+                    }
                     v {
                         set ui_options(ports_verbose) yes
                     }

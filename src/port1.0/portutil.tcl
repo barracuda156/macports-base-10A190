@@ -732,30 +732,38 @@ proc variant_exists {name} {
 # Portfile level procedure to provide support for declaring platform-specifics
 # Basically, just a fancy 'if', so that Portfiles' platform declarations can
 # be more readable, and support arch and version specifics
-proc platform {args} {
+proc platform {os args} {
     global os.platform os.subplatform os.arch os.major
 
-    set len [llength $args]
-    if {$len < 2} {
+    if {[llength $args] < 1} {
         return -code error "Malformed platform specification"
     }
-    set code [lindex $args end]
-    set os [lindex $args 0]
-    set args [lrange $args 1 end-1]
+    set len 1
+    if {[lindex $args end-1] eq "else"} {
+        set code [lindex $args end-2]
+        set altcode [lindex $args end]
+        set consumed 3
+    } else {
+        set code [lindex $args end]
+        set altcode ""
+        set consumed 1
+    }
 
     set release_re {(^[0-9]+$)}
     set arch_re {([a-zA-Z0-9]*)}
-    foreach arg $args {
+    foreach arg [lrange $args 0 end-$consumed]  {
         if {[regexp $release_re $arg match result]} {
             set release $result
+            set len [expr $len + 1]
         } elseif {[regexp $arch_re $arg match result]} {
             set arch $result
+            set len [expr $len + 1]
         }
     }
 
     set match 0
     # 'os' could be a platform or an arch when it's alone
-    if {$len == 2 && ($os eq ${os.platform} || $os eq ${os.subplatform} || $os eq ${os.arch})} {
+    if {$len == 1 && ($os eq ${os.platform} || $os eq ${os.subplatform} || $os eq ${os.arch})} {
         set match 1
     } elseif {($os eq ${os.platform} || $os eq ${os.subplatform})
               && (![info exists release] || ${os.major} == $release)
@@ -766,6 +774,8 @@ proc platform {args} {
     # Execute the code if this platform matches the platform we're on
     if {$match} {
         uplevel 1 $code
+    } elseif {${altcode} ne ""} {
+        uplevel 1 $altcode
     }
 }
 
@@ -895,10 +905,14 @@ proc append_to_environment_value {command key args} {
 # debugging purposes.
 proc environment_array_to_string {environment_array} {
     upvar 1 ${environment_array} env_array
-    foreach {key value} [array get env_array] {
-        lappend env_list $key='$value'
+    if {[array size env_array] > 0} {
+        foreach {key value} [array get env_array] {
+            lappend env_list $key='$value'
+        }
+        return "\n[join [lsort $env_list] "\n"]"
+    } else {
+        return ""
     }
-    return "\n[join [lsort $env_list] "\n"]"
 }
 
 ########### Distname utility functions ###########
@@ -1470,6 +1484,9 @@ proc target_run {ditem} {
                         pkg         -
                         portpkg     -
                         mpkg        -
+                        rpm         -
+                        srpm        -
+                        dpkg        -
                         mdmg        -
                         ""          { set deptypes [list depends_fetch depends_extract depends_patch depends_lib depends_build depends_run] }
 
@@ -2816,7 +2833,8 @@ proc extract_archive_metadata {archive_location archive_type metadata_type} {
             set raw_contents [exec -ignorestderr [findBinary tar ${portutil::autoconf::tar_path}] -xO${qflag}f $archive_location ./+CONTENTS]
         }
         txz {
-            set raw_contents [exec -ignorestderr [findBinary tar ${portutil::autoconf::tar_path}] -xO${qflag}f $archive_location --use-compress-program [findBinary xz ""] ./+CONTENTS]
+#            set raw_contents [exec -ignorestderr [findBinary tar ${portutil::autoconf::tar_path}] -xO${qflag}f $archive_location --use-compress-program [findBinary xz ""] ./+CONTENTS]
+            set raw_contents [exec -ignorestderr [findBinary tar ${portutil::autoconf::tar_path}] -xOJ${qflag}f $archive_location ./+CONTENTS]
         }
         tlz {
             set raw_contents [exec -ignorestderr [findBinary tar ${portutil::autoconf::tar_path}] -xO${qflag}f $archive_location --use-compress-program [findBinary lzma ""] ./+CONTENTS]

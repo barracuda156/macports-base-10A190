@@ -887,15 +887,10 @@ AC_DEFUN([MP_LIBCURL_FLAGS],[
 	fi
 
 	CFLAGS_LIBCURL=$($CURL_CONFIG --cflags)
-	if test "x$curlprefix" = "x"; then
-		# System curl-config emits absurd output for --libs
-		# See rdar://7244457
-		LDFLAGS_LIBCURL="-lcurl"
-	else
-		# Due to a bug in dist, --arch flags are improperly supplied by curl-config.
-		# Get rid of them.
-		LDFLAGS_LIBCURL=$($CURL_CONFIG --libs | [sed 's/-arch [A-Za-z0-9_]* //g'])
-	fi
+	LDFLAGS_LIBCURL=$($CURL_CONFIG --libs)
+	# prefer to use libcurl-gnutls.so which can't cause openssl version clashes
+	AC_CHECK_LIB([curl-gnutls], [curl_global_init],[
+		LDFLAGS_LIBCURL=-lcurl-gnutls])
 
 	AC_SUBST(CFLAGS_LIBCURL)
 	AC_SUBST(LDFLAGS_LIBCURL)

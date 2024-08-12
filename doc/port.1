@@ -1297,6 +1297,24 @@ Creates an Internet\-enabled disk image containing a macOS metapackage of
 \fIportname\fR
 and its dependencies\&.
 .RE
+.PP
+rpm
+.RS 4
+Creates an RPM binary package of
+\fIportname\fR, similar to a tgz \(lqarchive\(rq\&.
+.RE
+.PP
+srpm
+.RS 4
+Creates a SRPM source package of
+\fIportname\fR, similar to a xar \(lqportpkg\(rq\&.
+.RE
+.PP
+dpkg
+.RS 4
+Creates a DEB binary package of
+\fIportname\fR\&. Takes an optional "hackers' delight" option \fI--no-deps\fR to omit recording any dependencies in the package.
+.RE
 .SH "EXAMPLES"
 .sp
 The following demonstrates invoking port with the extract action on portdir \(lqtextproc/figlet\(rq and extract\&.suffix set to \(lq\&.tgz\(rq:

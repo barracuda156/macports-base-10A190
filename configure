@@ -7213,7 +7213,7 @@ else
     # This has to be set to something or mtree won't create any directories.
     # It doesn't matter what it's set to for non-root though, as it can't
     # change the ownership anyway.
-    MTREE_GNAME="admin"
+    MTREE_GNAME="adm"
 fi
 
 

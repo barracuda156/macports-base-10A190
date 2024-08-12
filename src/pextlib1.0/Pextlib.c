@@ -81,6 +81,8 @@
 #ifdef __MACH__
 #include <mach-o/loader.h>
 #include <mach-o/fat.h>
+#elif defined(__linux__)
+#include <elf.h>
 #endif
 
 #include <tcl.h>
@@ -117,6 +119,8 @@ extern char **environ;
 
 #ifndef HAVE_SETMODE
 #include "setmode.h"
+#else
+#include <bsd/unistd.h>
 #endif
 
 __attribute__((format(printf, 3, 0)))
@@ -499,7 +503,6 @@ int lchownCmd(ClientData clientData UNUSED, Tcl_Interp *interp, int objc, Tcl_Ob
     return TCL_OK;
 }
 
-#ifdef __MACH__
 /**
  * Tcl function to determine whether a file given by path is binary (in terms of being Mach-O)
  * Defined on Mac-Systems only, because the necessary headers are only available there.
@@ -550,6 +553,7 @@ static int fileIsBinaryCmd(ClientData clientData UNUSED, Tcl_Interp *interp, int
         fclose(file);
         return TCL_ERROR;
     }
+#ifdef __MACH__
     if (magic == MH_MAGIC || magic == MH_MAGIC_64) {
         fclose(file);
         /* this is a mach-o file */
@@ -589,12 +593,23 @@ static int fileIsBinaryCmd(ClientData clientData UNUSED, Tcl_Interp *interp, int
         Tcl_SetObjResult(interp, Tcl_NewBooleanObj(false));
         return TCL_OK;
     }
+#elif defined(__linux__)
+    {
+        char mstring[4];
+        memcpy( &mstring[0], &magic, 4 );
+        if (strncmp( mstring, ELFMAG, 4 ) == 0) {
+            fclose(file);
+            /* this is an ELF object; we still return false until we know what to do with those */
+            Tcl_SetObjResult(interp, Tcl_NewBooleanObj(false));
+            return TCL_OK;
+        }
+    }
+#endif
     fclose(file);
 
     Tcl_SetObjResult(interp, Tcl_NewBooleanObj(false));
     return TCL_OK;
 }
-#endif
 
 /* Check if the configured DNS server(s) incorrectly return a result for
    a nonexistent hostname. Returns true if broken, false if OK. */
@@ -1181,9 +1196,7 @@ int Pextlib_Init(Tcl_Interp *interp)
 	Tcl_CreateObjCommand(interp, "unsetenv", UnsetEnvCmd, NULL, NULL);
 	Tcl_CreateObjCommand(interp, "lchown", lchownCmd, NULL, NULL);
 	Tcl_CreateObjCommand(interp, "realpath", RealpathCmd, NULL, NULL);
-#ifdef __MACH__
     Tcl_CreateObjCommand(interp, "fileIsBinary", fileIsBinaryCmd, NULL, NULL);
-#endif
 
     Tcl_CreateObjCommand(interp, "readline", ReadlineCmd, NULL, NULL);
     Tcl_CreateObjCommand(interp, "rl_history", RLHistoryCmd, NULL, NULL);

@@ -728,6 +728,10 @@ proc portconfigure::configure_get_universal_archflags {} {
 
 # internal proc to determine if the compiler supports -arch
 proc portconfigure::arch_flag_supported {compiler {multiple_arch_flags no}} {
+    global os.platform
+    if {${os.platform} ne "darwin"} {
+        return no
+    }
     if {${multiple_arch_flags}} {
         return [regexp {^gcc-4|llvm|apple|clang} ${compiler}]
     } else {

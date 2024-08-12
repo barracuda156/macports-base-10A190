@@ -150,7 +150,11 @@ proc portbuild::build_getjobs {args} {
     # if set to '0', use the number of cores for the number of jobs
     if {$jobs == 0} {
         macports_try -pass_signal {
-            set jobs [sysctl hw.activecpu]
+            if {[option os.platform] eq "linux"} {
+                set jobs [exec nproc]
+            } else {
+                set jobs [sysctl hw.activecpu]
+            }
         } on error {} {
             set jobs 2
             ui_warn "failed to determine the number of available CPUs (probably not supported on this platform)"
@@ -158,7 +162,12 @@ proc portbuild::build_getjobs {args} {
         }
 
         macports_try -pass_signal {
-            set memsize [sysctl hw.memsize]
+            if {[option os.platform] eq "linux"} {
+                # /proc/meminfo gives the (free!) total memory in kB; we want bytes like `sysctl hw.memsize` gives:
+                set memsize [expr [exec sed -e "s|MemTotal:\[ \]*||g" -e "s| kB.*||g" -e 1q /proc/meminfo] * 1024]
+            } else {
+                set memsize [sysctl hw.memsize]
+            }
             global build.mem_per_job
             set jobs_limit_mem [expr {int($memsize / (${build.mem_per_job} * 1024 * 1024)) + 1}]
             if {$jobs > $jobs_limit_mem} {

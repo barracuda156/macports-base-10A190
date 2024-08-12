@@ -1912,9 +1912,11 @@ _wrap_macho_loadcmd_mlt_install_name_get(ClientData clientData SWIGUNUSED, Tcl_I
     SWIG_exception_fail(SWIG_ArgError(res1), "in method '" "macho_loadcmd_mlt_install_name_get" "', argument " "1"" of type '" "struct macho_loadcmd *""'"); 
   }
   arg1 = (struct macho_loadcmd *)(argp1);
-  result = (char *) ((arg1)->mlt_install_name);
-  Tcl_SetObjResult(interp,SWIG_FromCharPtr((const char *)result));
-  return TCL_OK;
+  if (arg1) {
+    result = (char *) ((arg1)->mlt_install_name);
+    Tcl_SetObjResult(interp,SWIG_FromCharPtr((const char *)result));
+    return TCL_OK;
+  }
 fail:
   return TCL_ERROR;
 }

@@ -670,6 +670,17 @@ mdmg::
     Creates an Internet-enabled disk image containing a macOS metapackage of
     'portname' and its dependencies.
 
+rpm::
+    Creates an RPM binary package of 'portname', similar to a tgz ``archive''.
+
+srpm::
+    Creates a SRPM source package of 'portname', similar to a xar ``portpkg''.
+
+dpkg::
+    Creates a DEB binary package of 'portname'. Takes an optional "hackers'
+    delight" option \fI--no-deps\fR to omit recording any dependencies in the
+    package.
+
 
 EXAMPLES
 --------
